@@ -1,0 +1,16 @@
+# Local Postgres for development. Run: docker compose up -d
+version: '3.9'
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hookcast
+      POSTGRES_PASSWORD: hookcast
+      POSTGRES_DB: hookcast
+    ports:
+      - '5432:5432'
+    volumes:
+      - hookcast_pgdata:/var/lib/postgresql/data
+volumes:
+  hookcast_pgdata:

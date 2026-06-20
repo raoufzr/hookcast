@@ -1,0 +1,201 @@
+// Hookcast — database schema
+// Postgres via Prisma. Run `npm run db:push` after setting DATABASE_URL.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Auth (NextAuth.js Prisma adapter shape) ----------
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  passwordHash  String? // set when the user signs up with email/password
+  createdAt     DateTime  @default(now())
+
+  accounts Account[]
+  sessions Session[]
+
+  subscription Subscription?
+  analyses     VideoAnalysis[]
+  usageLogs    UsageLog[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ---------- Billing ----------
+
+enum PlanId {
+  FREE
+  PRO
+  AGENCY
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  TRIALING
+  PAST_DUE
+  CANCELED
+  INCOMPLETE
+}
+
+model Subscription {
+  id                   String              @id @default(cuid())
+  userId               String              @unique
+  user                 User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan                 PlanId              @default(FREE)
+  status               SubscriptionStatus  @default(ACTIVE)
+  stripeCustomerId     String?             @unique
+  stripeSubscriptionId String?             @unique
+  stripePriceId        String?
+  currentPeriodEnd     DateTime?
+  cancelAtPeriodEnd    Boolean             @default(false)
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+}
+
+// Tracks monthly analysis credit usage per user, independent of Stripe,
+// so free-plan limits work even without a Subscription row.
+model UsageLog {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action    String // "analyze" | "regenerate" | "similar"
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+// ---------- Core product ----------
+
+enum Platform {
+  YOUTUBE
+  TIKTOK
+  INSTAGRAM
+}
+
+enum Verdict {
+  VIRAL
+  ABOVE_AVERAGE
+  ORDINARY
+  UNDERPERFORMING
+}
+
+enum AnalysisStatus {
+  PENDING
+  FETCHING_METADATA
+  ANALYZING
+  COMPLETE
+  FAILED
+}
+
+model VideoAnalysis {
+  id       String @id @default(cuid())
+  userId   String
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  sourceUrl String
+  platform  Platform
+  status    AnalysisStatus @default(PENDING)
+  errorMessage String?
+
+  // Raw metadata pulled from the platform adapter
+  title        String?
+  authorName   String?
+  thumbnailUrl String?
+  durationSec  Int?
+  viewCount    BigInt?
+  likeCount    BigInt?
+  commentCount BigInt?
+  shareCount   BigInt?
+  publishedAt  DateTime?
+  transcript   String?  @db.Text // user-pasted or fetched captions, optional input
+
+  // Claude's structured analysis output (see types/analysis.ts for shape)
+  viralityScore Int? // 0-100
+  verdict       Verdict?
+  analysisJson  Json? // full structured breakdown: hook, structure, pacing, editing, factors
+  improvements  Json? // ordered list of improvement suggestions
+
+  // Regenerated creative (can be re-run, so we keep the latest + history)
+  redesigns RedesignVersion[]
+
+  // Similar / comparable videos found for this analysis
+  similarVideos SimilarVideo[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, createdAt])
+}
+
+model RedesignVersion {
+  id              String        @id @default(cuid())
+  videoAnalysisId String
+  videoAnalysis   VideoAnalysis @relation(fields: [videoAnalysisId], references: [id], onDelete: Cascade)
+
+  hook         String  @db.Text
+  hookRationale String @db.Text
+  script       String  @db.Text
+  caption      String? @db.Text
+  hashtags     String[]
+
+  createdAt DateTime @default(now())
+}
+
+model SimilarVideo {
+  id              String        @id @default(cuid())
+  videoAnalysisId String
+  videoAnalysis   VideoAnalysis @relation(fields: [videoAnalysisId], references: [id], onDelete: Cascade)
+
+  platform     Platform
+  url          String
+  title        String?
+  authorName   String?
+  thumbnailUrl String?
+  viewCount    BigInt?
+  whySimilar   String? @db.Text
+
+  createdAt DateTime @default(now())
+}
