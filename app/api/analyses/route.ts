@@ -15,5 +15,7 @@ export async function GET() {
     take: 50,
   });
 
-  return NextResponse.json(analyses.map(serializeAnalysis));
+  return NextResponse.json(
+  analyses.map((analysis) => serializeAnalysis(analysis))
+);
 }
